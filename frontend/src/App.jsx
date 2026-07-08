@@ -1,25 +1,49 @@
-import React from 'react'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-import Home from './Pages/Home'
-import Dashboard from './Pages/Dashboard'
-import Products from './Pages/Products'
-import Ville from './Pages/Ville'
-import Login from './Pages/LoginPage/Login'
-import Register from './Pages/Inscription/Inscription'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext.jsx';
+import PrivateRoute from './components/PrivateRoute.jsx';
+import Login from './Pages/Login.jsx';
+import AdminDashboard from './Pages/AdminDashboard.jsx';
+import DirecteurDashboard from './Pages/DirecteurDashboard.jsx';
+import ResponsableStockDashboard from './Pages/ResponsableStockDashboard.jsx';
+import VendeurDashboard from './Pages/VendeurDashboard.jsx';
+import ClientDashboard from './Pages/ClientDashboard.jsx';
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/products" element={<Products />} />
-        <Route path="/villes" element={<Ville />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-      </Routes>
-    </Router>
-  )
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Navigate to="/login" />} />
+          <Route path="/admin" element={
+            <PrivateRoute allowedRoles={['admin']}>
+              <AdminDashboard />
+            </PrivateRoute>
+          } />
+          <Route path="/directeur" element={
+            <PrivateRoute allowedRoles={['directeur_ventes']}>
+              <DirecteurDashboard />
+            </PrivateRoute>
+          } />
+          <Route path="/stock" element={
+            <PrivateRoute allowedRoles={['responsable_stock']}>
+              <ResponsableStockDashboard />
+            </PrivateRoute>
+          } />
+          <Route path="/vendeur" element={
+            <PrivateRoute allowedRoles={['vendeur']}>
+              <VendeurDashboard />
+            </PrivateRoute>
+          } />
+          <Route path="/client" element={
+            <PrivateRoute allowedRoles={['client']}>
+              <ClientDashboard />
+            </PrivateRoute>
+          } />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;
