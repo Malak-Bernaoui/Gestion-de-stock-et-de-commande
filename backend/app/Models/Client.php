@@ -4,11 +4,6 @@ use Illuminate\Database\Eloquent\Model;
 
 class Client extends Model
 {
-    protected $table = 'clients';
-    protected $fillable = ['user_id', 'CIN', 'nom', 'telephone', 'email', 'dateCreation'];
-
-    public function user()
-    {
-        return $this->belongsTo(User::class);
-    }
+    protected $fillable = ['CIN', 'nom', 'telephone', 'email', 'dateCreation', 'motDePasse'];
+    public function commandes() { return $this->hasMany(Commande::class); }
 }

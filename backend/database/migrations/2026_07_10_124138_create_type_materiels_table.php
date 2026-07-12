@@ -11,15 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-Schema::create('clients', function (Blueprint $table) {
+Schema::create('type_materiels', function (Blueprint $table) {
     $table->id();
-    $table->foreignId('user_id')->constrained()->onDelete('cascade')->unique();
-    $table->string('CIN')->unique();
-    $table->string('nom');
-    $table->string('telephone');
-    $table->string('email')->nullable();
-    $table->date('dateCreation');
-    // autres champs si besoin
+    $table->string('libelle')->unique();
     $table->timestamps();
 });
     }
@@ -29,6 +23,6 @@ Schema::create('clients', function (Blueprint $table) {
      */
     public function down(): void
     {
-        Schema::dropIfExists('clients');
+        Schema::dropIfExists('type_materiels');
     }
 };
