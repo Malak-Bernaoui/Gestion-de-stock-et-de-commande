@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Facture;
 use App\Models\Commande;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Exception;
 
 class FactureController extends Controller
 {
@@ -25,7 +27,9 @@ class FactureController extends Controller
     // Afficher toutes les factures
     public function index()
     {
-        $factures = Facture::with(['commande.client', 'commande.materiel', 'generateur'])->get();
+        $factures = Facture::with(['commande.client', 'commande.materiel', 'generateur'])
+            ->when($this->estVendeur(), fn ($query) => $query->whereHas('commande', fn ($c) => $c->where('vendeur_id', auth()->id())))
+            ->get();
         return response()->json($factures);
     }
 
@@ -33,6 +37,7 @@ class FactureController extends Controller
     public function show($id)
     {
         $facture = Facture::with(['commande.client', 'commande.materiel', 'generateur'])->findOrFail($id);
+        $this->assertProprietaire($facture);
         return response()->json($facture);
     }
 
@@ -55,5 +60,48 @@ class FactureController extends Controller
 
         $facture = $this->genererFacture($commande);
         return response()->json($facture, 201);
+    }
+
+    public function update(Request $request, $id)
+    {
+        $facture = Facture::findOrFail($id);
+        $validated = $request->validate([
+            'reference' => 'sometimes|string|unique:factures,reference,'.$facture->id,
+            'date_generation' => 'sometimes|date',
+        ]);
+        $facture->update($validated);
+        return response()->json($facture->load(['commande.client', 'commande.materiel', 'generateur']));
+    }
+
+    public function pdf($id)
+    {
+        $facture = Facture::with(['commande.client', 'commande.materiel', 'generateur'])->findOrFail($id);
+        $this->assertProprietaire($facture);
+
+        try {
+            // Convertir date_generation en objet Carbon si c'est une chaîne
+            if (is_string($facture->date_generation)) {
+                $facture->date_generation = \Carbon\Carbon::parse($facture->date_generation);
+            }
+
+            $pdf = Pdf::loadView('factures.ticket', compact('facture'));
+            return $pdf->download('facture-'.$facture->reference.'.pdf');
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Erreur PDF : ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    private function estVendeur(): bool
+    {
+        return auth()->user()?->getRole() === 'vendeur';
+    }
+
+    private function assertProprietaire(Facture $facture): void
+    {
+        if ($this->estVendeur() && $facture->commande?->vendeur_id !== auth()->id()) {
+            abort(403, 'Vous ne pouvez consulter que vos propres factures.');
+        }
     }
 }

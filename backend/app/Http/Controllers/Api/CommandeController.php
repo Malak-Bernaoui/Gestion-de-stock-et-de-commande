@@ -4,27 +4,39 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Commande;
-use App\Models\Client;
 use App\Models\Materiel;
-use App\Models\PointDeVente;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class CommandeController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $commandes = Commande::with(['client', 'materiel', 'vendeur', 'pointVente', 'facture'])->get();
+        $perPage = min(max((int) $request->input('per_page', 10), 1), 100);
+        $search = trim((string) $request->input('search', ''));
+
+        $commandes = Commande::with(['client:id,nom', 'materiel:id,nom,type_materiel_id', 'materiel.type:id,libelle', 'vendeur:id,name', 'pointVente:id,nom', 'facture'])
+            ->when($this->estVendeur(), fn ($query) => $query->where('vendeur_id', auth()->id()))
+            ->when($request->filled('statut'), fn ($query) => $query->where('statut', $request->input('statut')))
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->where('id', 'like', "%{$search}%")
+                        ->orWhere('client_nom', 'like', "%{$search}%")
+                        ->orWhereHas('client', fn ($client) => $client->where('nom', 'like', "%{$search}%"))
+                        ->orWhereHas('materiel', fn ($materiel) => $materiel->where('nom', 'like', "%{$search}%"));
+                });
+            })
+            ->orderByDesc('dateCommande')
+            ->paginate($perPage);
+
         return response()->json($commandes);
     }
 
     public function show($id)
     {
-        $commande = Commande::with(['client', 'materiel', 'vendeur', 'pointVente', 'facture'])->findOrFail($id);
-        return response()->json($commande);
+        return response()->json(Commande::with(['client', 'materiel', 'vendeur', 'pointVente', 'facture'])->findOrFail($id));
     }
 
-    // Créer une commande (vendeur)
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -33,83 +45,97 @@ class CommandeController extends Controller
             'client_nom' => 'required_if:is_nr,true|nullable|string',
             'materiel_id' => 'required|exists:materiels,id',
             'quantite' => 'required|integer|min:1',
-            'point_vente_id' => 'required|exists:point_ventes,id',
+            'point_vente_id' => 'required|exists:point_de_ventes,id',
             'dateCommande' => 'required|date',
             'dateDisponibilite' => 'nullable|date',
             'prixHT' => 'required|numeric|min:0',
         ]);
 
-        // Vérifier la disponibilité
-        $materiel = Materiel::findOrFail($validated['materiel_id']);
-        if ($validated['quantite'] > $materiel->quantiteDisponible) {
-            return response()->json(['message' => 'Quantité en stock insuffisante'], 400);
-        }
+        $commande = DB::transaction(function () use ($validated) {
+            $materiel = Materiel::lockForUpdate()->findOrFail($validated['materiel_id']);
+            if ($validated['quantite'] > $materiel->quantiteDisponible) {
+                abort(422, 'Quantité en stock insuffisante.');
+            }
 
-        // Calculer le TTC (TVA 20% par défaut)
-        $tva = 0.20;
-        $prixTTC = $validated['prixHT'] * (1 + $tva);
+            $commande = Commande::create([
+                'client_id' => $validated['client_id'] ?? null,
+                'is_nr' => $validated['is_nr'],
+                'client_nom' => $validated['is_nr'] ? $validated['client_nom'] : null,
+                'materiel_id' => $validated['materiel_id'],
+                'quantite' => $validated['quantite'],
+                'vendeur_id' => auth()->id(),
+                'point_vente_id' => $validated['point_vente_id'],
+                'dateCommande' => $validated['dateCommande'],
+                'dateDisponibilite' => $validated['dateDisponibilite'] ?? null,
+                'prixHT' => $validated['prixHT'],
+                'prixTTC' => $validated['prixHT'] * 1.20,
+                'statut' => 'en_attente',
+            ]);
 
-        // Créer la commande
-        $commande = Commande::create([
-            'client_id' => $validated['client_id'] ?? null,
-            'is_nr' => $validated['is_nr'],
-            'client_nom' => $validated['is_nr'] ? $validated['client_nom'] : null,
-            'materiel_id' => $validated['materiel_id'],
-            'quantite' => $validated['quantite'],
-            'vendeur_id' => auth()->id(),
-            'point_vente_id' => $validated['point_vente_id'],
-            'dateCommande' => $validated['dateCommande'],
-            'dateDisponibilite' => $validated['dateDisponibilite'] ?? null,
-            'prixHT' => $validated['prixHT'],
-            'prixTTC' => $prixTTC,
-            'statut' => 'en_attente',
-        ]);
-
-        // Mettre à jour le stock (réserver)
-        $materiel->quantiteDisponible -= $validated['quantite'];
-        $materiel->save();
+            $materiel->decrement('quantiteDisponible', $validated['quantite']);
+            return $commande;
+        });
 
         return response()->json($commande->load(['client', 'materiel', 'vendeur', 'pointVente']), 201);
     }
 
-    // Valider une vente (passer en "retiree" et générer une facture)
     public function valider($id)
     {
-        $commande = Commande::findOrFail($id);
-        if ($commande->statut === 'annulee') {
-            return response()->json(['message' => 'Cette commande est annulée'], 400);
-        }
-        if ($commande->statut === 'retiree') {
-            return response()->json(['message' => 'Déjà validée'], 400);
-        }
+        $result = DB::transaction(function () use ($id) {
+            $commande = Commande::with('facture')->lockForUpdate()->findOrFail($id);
+            $this->assertProprietaire($commande);
+            if ($commande->statut === 'annulee') {
+                abort(422, 'Cette commande est annulée.');
+            }
+            if ($commande->statut === 'retiree') {
+                abort(422, 'Cette commande est déjà validée.');
+            }
 
-        $commande->statut = 'retiree';
-        $commande->dateAchat = now();
-        $commande->save();
+            $commande->update(['statut' => 'retiree', 'dateAchat' => now()]);
+            $facture = $commande->facture ?? (new FactureController())->genererFacture($commande);
+            return compact('commande', 'facture');
+        });
 
-        // Générer automatiquement une facture (appel à FactureController)
-        $factureController = new FactureController();
-        $facture = $factureController->genererFacture($commande);
-
-        return response()->json(['message' => 'Vente validée, facture générée', 'facture' => $facture]);
+        return response()->json([
+            'message' => 'Commande validée et facture générée.',
+            'commande' => $result['commande']->load(['client', 'materiel', 'facture']),
+            'facture' => $result['facture'],
+        ]);
     }
 
-    // Annuler une commande (remettre les quantités en stock)
     public function annuler($id)
     {
-        $commande = Commande::findOrFail($id);
-        if ($commande->statut === 'retiree') {
-            return response()->json(['message' => 'Impossible d\'annuler une commande déjà vendue'], 400);
+        $commande = DB::transaction(function () use ($id) {
+            $commande = Commande::lockForUpdate()->findOrFail($id);
+            $this->assertProprietaire($commande);
+            if ($commande->statut === 'retiree') {
+                abort(422, 'Impossible d’annuler une commande déjà validée.');
+            }
+            if ($commande->statut === 'annulee') {
+                abort(422, 'Cette commande est déjà annulée.');
+            }
+
+            $materiel = Materiel::lockForUpdate()->findOrFail($commande->materiel_id);
+            $materiel->increment('quantiteDisponible', $commande->quantite);
+            $commande->update(['statut' => 'annulee']);
+            return $commande;
+        });
+
+        return response()->json([
+            'message' => 'Commande annulée et stock remis à jour.',
+            'commande' => $commande->load(['client', 'materiel']),
+        ]);
+    }
+
+    private function estVendeur(): bool
+    {
+        return auth()->user()?->getRole() === 'vendeur';
+    }
+
+    private function assertProprietaire(Commande $commande): void
+    {
+        if ($this->estVendeur() && $commande->vendeur_id !== auth()->id()) {
+            abort(403, 'Vous ne pouvez agir que sur vos propres commandes.');
         }
-
-        // Rendre les quantités au stock
-        $materiel = $commande->materiel;
-        $materiel->quantiteDisponible += $commande->quantite;
-        $materiel->save();
-
-        $commande->statut = 'annulee';
-        $commande->save();
-
-        return response()->json(['message' => 'Commande annulée']);
     }
 }

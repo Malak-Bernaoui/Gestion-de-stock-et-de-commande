@@ -9,9 +9,13 @@ use Illuminate\Validation\Rule;
 
 class PartenaireController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(Partenaire::with('ville')->get());
+        return response()->json(
+            Partenaire::with('ville')
+                ->when($request->filled('type'), fn ($query) => $query->where('type', $request->input('type')))
+                ->get()
+        );
     }
 
     public function show($id)

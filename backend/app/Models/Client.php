@@ -4,6 +4,6 @@ use Illuminate\Database\Eloquent\Model;
 
 class Client extends Model
 {
-    protected $fillable = ['CIN', 'nom', 'telephone', 'email', 'dateCreation', 'motDePasse'];
+    protected $fillable = ['CIN', 'nom', 'telephone', 'email', 'dateCreation', 'motDePasse', 'user_id'];
     public function commandes() { return $this->hasMany(Commande::class); }
 }

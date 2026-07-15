@@ -12,9 +12,9 @@ return new class extends Migration
  public function up()
 {
     Schema::table('clients', function (Blueprint $table) {
-        $table->foreignId('user_id')->constrained()->onDelete('cascade');
+        $table->foreignId('user_id')->nullable()->constrained()->onDelete('cascade');
         // If you prefer without foreign key constraint (simple column):
-        // $table->unsignedBigInteger('user_id');
+        // $table->unsignedBigInteger('user_id')->nullable();
     });
 }
 

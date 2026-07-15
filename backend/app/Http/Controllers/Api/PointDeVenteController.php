@@ -22,7 +22,7 @@ class PointDeVenteController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'code'      => 'required|string|unique:point_ventes',
+            'code'      => 'required|string|unique:point_de_ventes',
             'nom'       => 'required|string',
             'adresse'   => 'required|string',
             'ville_id'  => 'required|exists:villes,id',
@@ -39,7 +39,7 @@ class PointDeVenteController extends Controller
             'code' => [
                 'sometimes',
                 'string',
-                Rule::unique('point_ventes')->ignore($point->id),
+                Rule::unique('point_de_ventes')->ignore($point->id),
             ],
             'nom'       => 'sometimes|string',
             'adresse'   => 'sometimes|string',
